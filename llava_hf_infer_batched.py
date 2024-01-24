@@ -48,7 +48,7 @@ def main(args):
     datasets.FLICKR_ROOT = os.path.join(args.data_path, "flickr30k")
     datasets.CASSP_ROOT = os.path.join(args.data_path, "prerelease_bow")
 
-    model = LlavaForConditionalGeneration.from_pretrained(args.model_path,torch_dtype=torch.float16,device_map=args.device)
+    model = LlavaForConditionalGeneration.from_pretrained(args.model_path,torch_dtype=torch.float16,device_map=args.device_map)
 
     processor = AutoProcessor.from_pretrained(args.model_path, pad_token="<pad>")
     
@@ -77,11 +77,14 @@ def main(args):
                 f'3.Object relationships that are relevant to answering the question.\n'  \
                 f'\nScene Graph:\n'
     elif args.cot_type == 'DNeg':
-        cot=f"Let's think based on the logic of double negation.\nFirstly, let's think if the negation form of the question is reasonable.\nThen, let's think if the double negation of the question is reasonable.\nFinally, let's think if the question itself is reasonable.\n"
+        cot=f"Let's think step by step based on the logic of double negation.\n" \
+        f"Firstly, let's think if the negation form of the question is consistent with the content in the image.\n" \
+        f"Then, let's think if the double negation of the question is consistent with the content in the image.\n" \
+        f"Finally, let's think if the question itself is correct.\n" 
     
     scores=[]
     
-    for images_list, captions_list in tqdm(data_loader):
+    for images_list, captions_list in tqdm(data_loader, desc="LLaVA Negation logic Evaluating"):
         
         batch_scores = []
         for captions in captions_list:
@@ -91,9 +94,9 @@ def main(args):
                 cot_prompts=[]
                 for i in range(len(captions)):
                     
-                    if args.cot_type in {'cot','DNeg'}:
+                    if args.cot_type == 'cot':
                         qs_ =  DEFAULT_IMAGE_TOKEN + '\n' +  cot
-                    elif args.cot_type == 'SG':
+                    elif args.cot_type in{'DNeg','SG'}:
                         qs_ =  DEFAULT_IMAGE_TOKEN + '\n' + captions[i] + '\n' + cot
                     sys_conv = copy.deepcopy(conv)
                     sys_conv.append_message(conv.roles[0], qs_)
@@ -120,11 +123,11 @@ def main(args):
                     sys_conv = copy.deepcopy(conv)
                     sys_conv.append_message(conv.roles[0], qs_)
                     sys_conv.append_message(conv.roles[1], None)
-                    cot_prompt = sys_conv.get_prompt()
+                    qs_ = sys_conv.get_prompt()
                 else:
                     qs_ =  cot_prompt + cot_output + f'\n{conv.roles[0]}: {opt} Answer the question directly.\n{conv.roles[1]}:'
                 prompts.append(qs_)
-                print(f'{qs_}\n')
+                
             
             inputs = processor(prompts, images=images_list, return_tensors="pt", padding=True).to(dtype=torch.float16, device=args.device, non_blocking=True)
             
@@ -139,9 +142,10 @@ def main(args):
             
             outputs = processor.batch_decode(output_ids[:, input_token_len:], skip_special_tokens=True)
             
-            for output in outputs:
+            for output, prompt in zip(outputs,prompts):
                 output = output.lower().strip()
-                print(f'{output}\n')
+                print(f'{prompt}\n')
+                print(f'{output}\n\n\n')
                 conv_output.write("\n" + output )
                 
                 if "yes" in output :
@@ -152,6 +156,7 @@ def main(args):
                     score.append(0)
                     print(f"There are not \"Yes\" or \"No\" in answer. \n The answer is: {output}\n")
             batch_scores.append(score)
+        
         
         batch_scores_flip=[list(item) for item in zip(*batch_scores)]
         scores.append(batch_scores_flip)
@@ -184,7 +189,8 @@ def main(args):
 
 def config():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", default="cuda:2", type=str)
+    parser.add_argument("--device", default="cuda", type=str)
+    parser.add_argument("--device_map", default="auto", type=str)
     parser.add_argument("--data_path", default="./data", type=str)
     parser.add_argument("--batch_size", default=8, type=int)
     parser.add_argument("--num_workers", default=4, type=int)

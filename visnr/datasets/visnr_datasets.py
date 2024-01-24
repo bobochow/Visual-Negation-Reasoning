@@ -18,6 +18,7 @@ from .retrieval_dataset import pre_caption
 from collections import Counter
 from .utils import top_n_accuracy
 
+
 class VG_Relation(Dataset):
     def __init__(self, image_preprocess, subordination_relation=False, multi_spatial_relation=False,
                  root_dir=CASSP_ROOT,
@@ -417,7 +418,6 @@ class VG_Attribution(Dataset):
             }
             result_records.append(res_dict)
         return result_records
-
 
 class COCO_Semantic_Structure(Dataset):
     def __init__(self, image_preprocess=None, semantic_structure=True, root_dir=COCO_ROOT, max_words=30, split="test",
