@@ -12,6 +12,7 @@ from torch.utils.data import Dataset
 from easydict import EasyDict as edict
 from torchvision.datasets.utils import download_url
 
+from .data_des import Text_Des
 from . import CASSP_ROOT, COCO_ROOT, FLICKR_ROOT
 from .retrieval_dataset import pre_caption
 from collections import Counter
@@ -219,178 +220,8 @@ class VG_Relation(Dataset):
         return result_records
 
 
-class VG_Attribution_Batched(Dataset):
-    def __init__(self, image_processor, max_instances: int, logic=False, attribute_ownership=False, root_dir=CASSP_ROOT,conv_mode='llava_v1',tokenizer=None,model_config=None,cot_type=None,*args, **kwargs):
-        
-        self.tokenizer = tokenizer
-        self.image_processor = image_processor
-        self.model_config = model_config
-        self.conv_mode = conv_mode
-        self.root_dir = root_dir
-        self.logic = logic
-        self.attribute_ownership = attribute_ownership
-        annotation_file = os.path.join(root_dir, "visual_genome_attribution.json")
-        image_dir = os.path.join(root_dir, "images")
-        
-        with open(annotation_file, "r") as f:
-            self.dataset = json.load(f)
-        
-        if max_instances != -1:
-            random.seed(42)
-            random.shuffle(self.dataset)
-            self.dataset = self.dataset[:max_instances]
-
-        for item in self.dataset:
-            item["image_path"] = os.path.join(image_dir, item["image_path"])
-        
-        # Set of attributes in each test case
-        self.all_attributes = [f"{item['attributes'][0]}_{item['attributes'][1]}" for item in self.dataset]
-        self.top_2 = False
-        if self.attribute_ownership:
-            self.cla_name = ["exchange", "separate"]
-            self.top_2 = True
-        elif self.logic:
-            self.cla_name = ["negative"]
-        else:
-            self.cla_name = ["exchange"]
-
-        self.cla_name.insert(0, "correct")
-        self.targets = [np.repeat(np.diag(np.ones(len(self.cla_name)))[i][None, :], len(self.dataset), axis=0)
-                        for i in range(len(self.cla_name))]
-        
-        self.qustion = "Are there {} in the image?"  # VG_Attribute_Ownership
-        # self.qustion = "Is the description, \"{}\", right?"  # VG_Subordination_Relationship
-        print(self.qustion)
-        
-        self.cot_type=cot_type
-        
-        if self.cot_type == 'cot':
-            self.cot=f"\nDescribe the image.\n"
-        elif self.cot_type == 'SG':
-            self.cot=f"Let's think step by step. For the provided image and its associated question, generate a scene graph in JSON format that includes the following:\n" \
-                    f'1.Objects that are relevant to answering the question.\n'    \
-                    f'2.Object attributes that are relevant to answering the question\n'  \
-                    f'3.Object relationships that are relevant to answering the question.\n'  \
-                    f'\nScene Graph:\n'
-        elif self.cot_type == 'Double Negation':
-            self.cot=f"\nLet's think based on the logic of double negation.\nFirstly, let's think if the negation form of the question is reasonable.\nThen, let's think if the double negation of the question is reasonable.\nFinally, let's think if the question itself is reasonable."
-    
-
-    def __getitem__(self, index):
-        test_case = self.dataset[index]
-        
-        image = Image.open(test_case["image_path"]).convert('RGB')
-        image = image.crop((test_case["bbox_x"], test_case["bbox_y"], test_case["bbox_x"] + test_case["bbox_w"],
-                            test_case["bbox_y"] + test_case["bbox_h"]))
-        
-        image_tensor = process_images([image], self.image_processor, self.model_config)[0]
-
-        if self.attribute_ownership:
-            # Each test case has a correct and incorrect caption.
-            true_caption = test_case["true_caption"]
-            false_caption = test_case["false_caption"]
-            split_semantic = "the {} and the {} are {} and {} respectively".format(test_case["obj1_name"],
-                                                                                   test_case["obj2_name"],
-                                                                                   test_case["attributes"][0],
-                                                                                   test_case["attributes"][1])
-            caption_options = [true_caption, false_caption, split_semantic]
-            
-        elif self.logic:
-            positive = "the {} is {} and the {} is {}".format(test_case["obj1_name"], test_case["attributes"][0],
-                                                              test_case["obj2_name"], test_case["attributes"][1])
-            negative = "the {} is not {} and the {} is not {}".format(test_case["obj1_name"],
-                                                                      test_case["attributes"][0],
-                                                                      test_case["obj2_name"],
-                                                                      test_case["attributes"][1])
-            caption_options = [positive, negative]
-        else:
-            true_caption = test_case["true_caption"]
-            false_caption = test_case["false_caption"]
-            caption_options = [true_caption, false_caption]
-        
-        input_ids_list=[]
-        question_options=[]
-        prompt_list=[]
-        for opt in caption_options:
-            if "is" in opt:
-                opt = opt.replace(" is", "")
-                opt = "is " + opt + " in the image?"
-                opt.replace("and", "and is")
-            elif "are" in opt:
-                opt = opt.replace(" are", "")
-                opt = "are " + opt + " in the image?"
-            else:
-                opt = self.qustion.format(opt)
-            question_options.append(opt)
-            conv = conv_templates[self.conv_mode].copy()
-            stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
-            
-            if self.cot_type == 'cot':
-                
-                if self.model_config.mm_use_im_start_end:
-                    qs = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN + '\n' + self.cot
-                else:
-                    qs = DEFAULT_IMAGE_TOKEN + '\n' + self.cot
-            else:
-                if self.model_config.mm_use_im_start_end:
-                    qs = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN + '\n' + f'{opt}{stop_str}'
-                else:
-                    qs = DEFAULT_IMAGE_TOKEN + '\n' + f'{opt}{stop_str}'
-            conv.append_message(conv.roles[0], qs)
-            conv.append_message(conv.roles[1], None)
-            # conv.append_message(conv.roles[1], None)
-            prompt = conv.get_prompt()
-            
-            prompt_list.append(prompt)
-            input_ids = tokenizer_image_token( prompt , self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt')
-            input_ids_list.append(input_ids)
-
-        # input_ids_list = torch.stack(input_ids_list)
-        return index, input_ids_list, image_tensor, prompt_list, question_options
-
-    def __len__(self):
-        return len(self.dataset)
-    
-    def evaluate_vllm_scores(self, scores):
-        """
-        Scores: M x 1 x N, i.e. first caption is the perturbed one, second is the positive one
-        """
-        if isinstance(scores, tuple):
-            scores_i2t = scores[1]
-            scores_t2i = scores[0]
-        else:
-            scores_t2i = scores
-            scores_i2t = scores
-
-        score = scores_i2t
-        cla_acc = {self.cla_name[i]: sum(score[:, i])/len(score) for i in range(len(self.cla_name))}
-        result_records = []
-        # 子类别数据
-        all_attributes = np.array(self.all_attributes)
-        for attr in np.unique(all_attributes):
-            attr_mask = (all_attributes == attr)
-            score_sub = score[attr_mask]
-            if attr_mask.sum() < 25:
-                continue
-            res_dict = {
-                "Attributes": attr,
-                "Count": attr_mask.sum(),
-            }
-            for i in range(len(self.cla_name)):
-                res_dict.update({self.cla_name[i]: sum(score_sub[:, i])/len(score_sub)})
-            result_records.append(res_dict)
-
-        # 总体数据
-        for key, value in cla_acc.items():
-            res_dict = {
-                "Attributes": key,
-                key: value,
-            }
-            result_records.append(res_dict)
-        return result_records
-
 class VG_Attribution(Dataset):
-    def __init__(self, image_preprocess, logic=False, attribute_ownership=False, root_dir=CASSP_ROOT, download=False,
+    def __init__(self, image_preprocess, max_instances: int, logic=False, attribute_ownership=False, root_dir=CASSP_ROOT, download=False,
                  *args, **kwargs):
         '''
         image_preprocess: a function that takes in a PIL image and returns a tensor.
@@ -416,6 +247,11 @@ class VG_Attribution(Dataset):
 
         with open(annotation_file, "r") as f:
             self.dataset = json.load(f)
+        
+        if max_instances != -1:
+            random.seed(42)
+            random.shuffle(self.dataset)
+            self.dataset = self.dataset[:max_instances]
 
         for item in self.dataset:
             item["image_path"] = os.path.join(image_dir, item["image_path"])
@@ -435,6 +271,9 @@ class VG_Attribution(Dataset):
         self.cla_name.insert(0, "correct")
         self.targets = [np.repeat(np.diag(np.ones(len(self.cla_name)))[i][None, :], len(self.dataset), axis=0)
                         for i in range(len(self.cla_name))]
+        
+        self.question="Are there {} in the image?"
+    
 
     def __len__(self):
         return len(self.dataset)
@@ -465,7 +304,20 @@ class VG_Attribution(Dataset):
                                                                       test_case["attributes"][0],
                                                                       test_case["obj2_name"],
                                                                       test_case["attributes"][1])
-            caption_options = [positive, negative]
+            caption_options = []
+            for opt in [positive, negative]:
+                if "is" in opt:
+                    opt = opt.replace(" is", "")
+                    opt = f"is {opt} in the image?"
+                    opt = opt.replace("and", "and is")
+                elif "are" in opt:
+                    opt = opt.replace(" are", "")
+                    opt = f"are {opt} in the image?"
+                else:
+                    opt = self.question.format(opt)
+                caption_options.append(opt)
+            
+            
         else:
             true_caption = test_case["true_caption"]
             false_caption = test_case["false_caption"]
@@ -786,14 +638,6 @@ def get_visual_genome_sentence_logic(image_preprocess, text_perturb_fn=None, ima
     dataset = VG_Attribution(image_preprocess=image_preprocess, text_perturb_fn=text_perturb_fn,
                              image_perturb_fn=image_perturb_fn, download=download, logic=True, *args, **kwargs)
     return dataset
-
-def get_visual_genome_sentence_logic_Batched(image_preprocess, text_perturb_fn=None, image_perturb_fn=None, download=False,
-                                     *args,
-                                     **kwargs):
-    dataset = VG_Attribution_Batched( image_processor=image_preprocess, text_perturb_fn=text_perturb_fn,
-                             image_perturb_fn=image_perturb_fn, download=download, logic=True, *args, **kwargs)
-    return dataset
-
 
 def get_visual_genome_spatial_relationship_bias(image_preprocess, text_perturb_fn=None, image_perturb_fn=None,
                                                 download=False, *args, **kwargs):
