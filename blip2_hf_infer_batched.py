@@ -52,7 +52,7 @@ def main(args):
 
     model = Blip2ForConditionalGeneration.from_pretrained(args.model_path,torch_dtype=torch.float16,device_map=args.device_map)
 
-    processor = Blip2Processor.from_pretrained(args.model_path, pad_token="<pad>")
+    processor = Blip2Processor.from_pretrained(args.model_path)
     
     dataset = get_dataset(args.dataset, image_preprocess=None, download=args.download,max_instances=args.max_instances)
 
@@ -91,15 +91,15 @@ def main(args):
         batch_scores = []
         for captions in captions_list:
             score=[]
-            
-            if args.cot_type:
+            cot_outputs=[]
+            if args.cot_type is not None:
                 cot_prompts=[]
                 for i in range(len(captions)):
                     
                     if args.cot_type == 'cot':
-                        qs_ =  cot
+                        qs_ =  f"Question: {cot}\nAnswer:\n"
                     elif args.cot_type in{'DNeg','SG'}:
-                        qs_ =  captions[i] + '\n' + cot
+                        qs_ =  f"Question: {captions[i]}{cot}\nAnswer:\n"
                     
                     cot_prompts.append(qs_)
                     
@@ -108,20 +108,18 @@ def main(args):
                     cot_inputs = processor(text=cot_prompts, images=images_list, return_tensors="pt", padding=True).to(dtype=torch.float16, device=args.device, non_blocking=True)
                     cot_output_ids = model.generate(
                         **cot_inputs,
-                        do_sample=True if args.temperature > 0 else False,
-                        temperature=args.temperature,
-                        max_new_tokens=1024)
+                        )
                 
                 cot_outputs = processor.batch_decode(cot_output_ids, skip_special_tokens=True)
             
             prompts=[]
-            for opt,cot_output in zip(captions,cot_outputs):
+            for i,opt in enumerate(captions):
                 
                 if args.cot_type == None:
                     qs_ =  f'\nQuestion: {opt} Answer:'
-                    
                 else:
-                    qs_ = f'Question: Describe the image. Answer: {cot_output}. Question: {opt} Answer:'
+                    qs_ = f'Question:{opt}{cot} Answer: {cot_outputs[i]}. \nQuestion: {opt} \nAnswer:'
+                    
                 prompts.append(qs_)
                 
             
@@ -130,16 +128,14 @@ def main(args):
             with torch.inference_mode():
                 output_ids = model.generate(
                     **inputs,
-                    do_sample=True if args.temperature > 0 else False,
-                    temperature=args.temperature,
-                    max_new_tokens=1024)
+                    )
             
             outputs = processor.batch_decode(output_ids, skip_special_tokens=True)
             
             for output, prompt in zip(outputs,prompts):
                 output = output.lower().strip()
-                # print(f'{prompt}\n')
-                # print(f'{output}\n\n\n')
+                print(f'{prompt}\n')
+                print(f'{output}\n\n\n')
                 conv_output.write("\n" + output )
                 
                 if "yes" in output :
@@ -190,7 +186,7 @@ def config():
     parser.add_argument("--num_workers", default=4, type=int)
     parser.add_argument("--model-path", type=str, default="Salesforce/blip2-flan-t5-xl")
     parser.add_argument("--model-base", type=str, default=None)
-    parser.add_argument("--model_name", default="llava", choices=["blip2", "llava"], type=str)
+    parser.add_argument("--model_name", default="blip2", choices=["blip2", "llava"], type=str)
     parser.add_argument("--dataset", default="Negation_Logic", type=str,
                         choices=["Attribute_Ownership", "Subordination_Relationship",
                                  "Spatial_Relationship", "Negation_Logic","Negation_Logic_Batched",
@@ -217,7 +213,7 @@ def config():
     parser.add_argument("--max_new_tokens", type=int, default=1024)
     parser.add_argument("--conv_mode", type=str, default="llava_v1")
     parser.add_argument("--max_instances", type=int, default=16)
-    parser.add_argument("--cot_type", type=str, default='cot')
+    parser.add_argument("--cot_type", type=str, default=None)
     return parser.parse_args()
 
 if __name__ == "__main__":

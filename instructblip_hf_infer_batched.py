@@ -17,8 +17,10 @@ from visnr import set_seed, save_scores, datasets
 from tqdm import tqdm
 from typing import List, Tuple
 
+import math
+
 from PIL import Image
-from transformers import AutoProcessor, LlavaForConditionalGeneration
+from transformers import InstructBlipProcessor, InstructBlipForConditionalGeneration
 from visnr.conversation import conv_templates
 from visnr.constants import DEFAULT_IMAGE_TOKEN
 
@@ -35,6 +37,8 @@ class DataCollatorForVisualTextGeneration(object):
             pos_caption_list.append(item['caption_options'][0])
             neg_caption_list.append(item['caption_options'][1])
         
+        # images = np.array(images_list)
+        
         return images_list, [pos_caption_list, neg_caption_list]
 
 
@@ -46,9 +50,11 @@ def main(args):
     datasets.FLICKR_ROOT = os.path.join(args.data_path, "flickr30k")
     datasets.CASSP_ROOT = os.path.join(args.data_path, "prerelease_bow")
 
-    model = LlavaForConditionalGeneration.from_pretrained(args.model_path,torch_dtype=torch.float16,device_map=args.device_map)
-
-    processor = AutoProcessor.from_pretrained(args.model_path, pad_token="<pad>")
+    model = InstructBlipForConditionalGeneration.from_pretrained(args.model_path,torch_dtype=torch.float16,device_map=args.device_map)
+    # model.config.text_config.pad_token_id = 0
+    # model.config.pad_token_id = 0
+    processor = InstructBlipProcessor.from_pretrained(args.model_path)
+    
     
     dataset = get_dataset(args.dataset, image_preprocess=None, download=args.download,max_instances=args.max_instances)
 
@@ -62,81 +68,65 @@ def main(args):
     os.makedirs(args.output_dir) if not os.path.exists(args.output_dir) else None
     conv_output = open(conv_output_file, "a")
     
-    
-    conv=conv_templates[args.conv_mode].copy()
-    
+
     cot = None
     if args.cot_type == 'cot':
         cot=f"Describe the image.\n"
     elif args.cot_type == 'SG':
-        cot=f"Let's think step by step. For the provided image and its associated question, generate a scene graph in JSON format that includes the following:\n" \
+        cot=f"For the provided image and its associated question, generate a scene graph in JSON format that includes the following:\n" \
                 f'1.Objects that are relevant to answering the question.\n'    \
                 f'2.Object attributes that are relevant to answering the question\n'  \
                 f'3.Object relationships that are relevant to answering the question.\n'  \
-                f'\nScene Graph:\n'
+                # f'\nScene Graph:\n'
     elif args.cot_type == 'DNeg':
         cot=f"Let's think step by step based on the logic of double negation.\n" \
         f"Firstly, let's think if the negation form of the question is consistent with the content in the image.\n" \
         f"Then, let's think if the double negation of the question is consistent with the content in the image.\n" \
         f"Finally, let's think if the question itself is correct.\n" 
-    elif args.cot_type == 'hint':
-        cot=f"Note that if there is a negation in the question, we should choose the wrong answer to the original question.\n"
-    
     
     scores=[]
     
-    for images_list, captions_list in tqdm(data_loader, desc="LLaVA Negation logic Evaluating"):
+    for images_list, captions_list in tqdm(data_loader, desc=f"{args.model_name} Negation logic Evaluating"):
         
         batch_scores = []
         for captions in captions_list:
             score=[]
             cot_outputs=[]
-            if args.cot_type in {'cot','DNeg','SG'}:
+            if args.cot_type is not None:
                 cot_prompts=[]
                 for i in range(len(captions)):
                     
-                    if args.cot_type == 'cot':
-                        qs_ =  DEFAULT_IMAGE_TOKEN + '\n' +  cot
+                    if args.cot_type in{'cot'} :
+                        qs_ =  f"Question: {cot}\nAnswer:\n"
                     elif args.cot_type in{'DNeg','SG'}:
-                        qs_ =  DEFAULT_IMAGE_TOKEN + '\n' + captions[i] + '\n' + cot
-                    sys_conv = copy.deepcopy(conv)
-                    sys_conv.append_message(conv.roles[0], qs_)
-                    sys_conv.append_message(conv.roles[1], None)
-                    cot_prompt = sys_conv.get_prompt()
-                    cot_prompts.append(cot_prompt)
+                        qs_ =  f"Question: {captions[i]}{cot}\nAnswer:\n"
+                    cot_prompts.append(qs_)
+                
                 
                 with torch.inference_mode():
-                    cot_inputs = processor(cot_prompts, images=images_list, return_tensors="pt", padding=True).to(dtype=torch.float16, device=args.device, non_blocking=True)
+                    cot_inputs = processor(text=cot_prompts, images=images_list, return_tensors="pt", padding=True).to(dtype=torch.float16, device=args.device, non_blocking=True)
+                    
                     cot_output_ids = model.generate(
                         **cot_inputs,
                         do_sample=True if args.temperature > 0 else False,
                         temperature=args.temperature,
                         max_new_tokens=1024)
                 
-                input_token_len = cot_inputs['input_ids'].shape[1]
-                cot_outputs = processor.batch_decode(cot_output_ids[:, input_token_len:], skip_special_tokens=True)
+                cot_outputs = processor.batch_decode(cot_output_ids, skip_special_tokens=True)
             
             prompts=[]
-            for i, opt in enumerate(captions):
+            for i,opt in enumerate(captions):
                 
-                if args.cot_type == None:
-                    qs_ =  DEFAULT_IMAGE_TOKEN + f'\n{opt}'
-                    sys_conv = copy.deepcopy(conv)
-                    sys_conv.append_message(conv.roles[0], qs_)
-                    sys_conv.append_message(conv.roles[1], None)
-                    qs_ = sys_conv.get_prompt()
-                elif args.cot_type == 'hint':
-                    qs_ =  DEFAULT_IMAGE_TOKEN + f'\n{opt} {cot}'
-                    sys_conv = copy.deepcopy(conv)
-                    sys_conv.append_message(conv.roles[0], qs_)
-                    sys_conv.append_message(conv.roles[1], None)
-                    qs_ = sys_conv.get_prompt()
+                if args.cot_type in {'cot','DNeg','SG'}:
+                    qs_ = f'Question:{opt}{cot} Answer: {cot_outputs[i]}. \nQuestion: {opt} \nAnswer:'
+                    
                 else:
-                    qs_ =  cot_prompts[i] + cot_outputs[i] + f'\n{conv.roles[0]}: {opt} Answer the question directly.\n{conv.roles[1]}:'
+                    qs_ =  f'\nQuestion: {opt} \nAnswer:'
+                    
                 prompts.append(qs_)
                 
             
-            inputs = processor(prompts, images=images_list, return_tensors="pt", padding=True).to(dtype=torch.float16, device=args.device, non_blocking=True)
+            inputs = processor(text=prompts, images=images_list, return_tensors="pt", padding=True).to(dtype=torch.float16, device=args.device, non_blocking=True)
             
             with torch.inference_mode():
                 output_ids = model.generate(
@@ -145,14 +135,12 @@ def main(args):
                     temperature=args.temperature,
                     max_new_tokens=1024)
             
-            input_token_len = inputs['input_ids'].shape[1]
-            
-            outputs = processor.batch_decode(output_ids[:, input_token_len:], skip_special_tokens=True)
+            outputs = processor.batch_decode(output_ids, skip_special_tokens=True)
             
             for output, prompt in zip(outputs,prompts):
                 output = output.lower().strip()
-                print(f'{prompt}\n')
-                print(f'{output}\n\n\n')
+                # print(f'{prompt}\n')
+                # print(f'{output}\n\n\n')
                 conv_output.write("\n" + output )
                 
                 if "yes" in output :
@@ -201,9 +189,9 @@ def config():
     parser.add_argument("--data_path", default="./data", type=str)
     parser.add_argument("--batch_size", default=8, type=int)
     parser.add_argument("--num_workers", default=4, type=int)
-    parser.add_argument("--model-path", type=str, default="llava-hf/llava-1.5-7b-hf")
+    parser.add_argument("--model-path", type=str, default="Salesforce/instructblip-vicuna-7b")
     parser.add_argument("--model-base", type=str, default=None)
-    parser.add_argument("--model_name", default="llava", choices=["blip2", "llava"], type=str)
+    parser.add_argument("--model_name", default="instructblip", choices=["instructblip","blip2", "llava"], type=str)
     parser.add_argument("--dataset", default="Negation_Logic", type=str,
                         choices=["Attribute_Ownership", "Subordination_Relationship",
                                  "Spatial_Relationship", "Negation_Logic","Negation_Logic_Batched",
@@ -230,7 +218,7 @@ def config():
     parser.add_argument("--max_new_tokens", type=int, default=1024)
     parser.add_argument("--conv_mode", type=str, default="llava_v1")
     parser.add_argument("--max_instances", type=int, default=16)
-    parser.add_argument("--cot_type", type=str, default='cot')
+    parser.add_argument("--cot_type", type=str, default=None)
     return parser.parse_args()
 
 if __name__ == "__main__":
