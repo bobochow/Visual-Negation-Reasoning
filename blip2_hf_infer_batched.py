@@ -66,9 +66,6 @@ def main(args):
     os.makedirs(args.output_dir) if not os.path.exists(args.output_dir) else None
     conv_output = open(conv_output_file, "a")
     
-    
-    conv=conv_templates[args.conv_mode].copy()
-    
     cot = None
     if args.cot_type == 'cot':
         cot=f"Question: Describe the image. Answer:\n"
@@ -83,6 +80,8 @@ def main(args):
         f"Firstly, let's think if the negation form of the question is consistent with the content in the image.\n" \
         f"Then, let's think if the double negation of the question is consistent with the content in the image.\n" \
         f"Finally, let's think if the question itself is correct.\n" 
+    elif args.cot_type == 'hint':
+        cot=f"Note that if there is a negation in the question, we should choose the wrong answer to the original question.\n"
     
     scores=[]
     
@@ -117,6 +116,8 @@ def main(args):
                 
                 if args.cot_type == None:
                     qs_ =  f'\nQuestion: {opt} Answer:'
+                elif args.cot_type == 'hint':
+                    qs_ =  f'\nQuestion: {opt} {cot} Answer:'
                 else:
                     qs_ = f'Question:{opt}{cot} Answer: {cot_outputs[i]}. \nQuestion: {opt} \nAnswer:'
                     

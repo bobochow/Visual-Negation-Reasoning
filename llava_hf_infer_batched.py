@@ -62,7 +62,6 @@ def main(args):
     os.makedirs(args.output_dir) if not os.path.exists(args.output_dir) else None
     conv_output = open(conv_output_file, "a")
     
-    
     conv=conv_templates[args.conv_mode].copy()
     
     cot = None
@@ -230,7 +229,7 @@ def config():
     parser.add_argument("--max_new_tokens", type=int, default=1024)
     parser.add_argument("--conv_mode", type=str, default="llava_v1")
     parser.add_argument("--max_instances", type=int, default=16)
-    parser.add_argument("--cot_type", type=str, default='cot')
+    parser.add_argument("--cot_type", type=str, default=None)
     return parser.parse_args()
 
 if __name__ == "__main__":
