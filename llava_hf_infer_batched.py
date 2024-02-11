@@ -79,7 +79,7 @@ def main(args):
         f"Then, let's think if the double negation of the question is consistent with the content in the image.\n" \
         f"Finally, let's think if the question itself is correct.\n" 
     elif args.cot_type == 'hint':
-        cot=f"Note that if there is a negation in the question, we should choose the wrong answer to the original question.\n"
+        cot=f"Note that if there is a negation in the question, you should answer the question with the opposite result of the affirmative form.\n"
     
     
     scores=[]
@@ -110,7 +110,7 @@ def main(args):
                         **cot_inputs,
                         do_sample=True if args.temperature > 0 else False,
                         temperature=args.temperature,
-                        max_new_tokens=1024)
+                        max_new_tokens=512)
                 
                 input_token_len = cot_inputs['input_ids'].shape[1]
                 cot_outputs = processor.batch_decode(cot_output_ids[:, input_token_len:], skip_special_tokens=True)
@@ -119,19 +119,19 @@ def main(args):
             for i, opt in enumerate(captions):
                 
                 if args.cot_type == None:
-                    qs_ =  DEFAULT_IMAGE_TOKEN + f'\n{opt}'
+                    qs_ =  DEFAULT_IMAGE_TOKEN + f"\n{opt}\nAnswer the question with 'yes' or 'no'.\n"
                     sys_conv = copy.deepcopy(conv)
                     sys_conv.append_message(conv.roles[0], qs_)
                     sys_conv.append_message(conv.roles[1], None)
                     qs_ = sys_conv.get_prompt()
                 elif args.cot_type == 'hint':
-                    qs_ =  DEFAULT_IMAGE_TOKEN + f'\n{opt} {cot}'
+                    qs_ =  DEFAULT_IMAGE_TOKEN + f"\n{opt} {cot}"
                     sys_conv = copy.deepcopy(conv)
                     sys_conv.append_message(conv.roles[0], qs_)
                     sys_conv.append_message(conv.roles[1], None)
                     qs_ = sys_conv.get_prompt()
                 else:
-                    qs_ =  cot_prompts[i] + cot_outputs[i] + f'\n{conv.roles[0]}: {opt} Answer the question directly.\n{conv.roles[1]}:'
+                    qs_ =  cot_prompts[i] + cot_outputs[i] + f"\n{conv.roles[0]}: {opt} \nAnswer the question with 'yes' or 'no'.\n{conv.roles[1]}:"
                 prompts.append(qs_)
                 
             
@@ -152,7 +152,8 @@ def main(args):
                 output = output.lower().strip()
                 print(f'{prompt}\n')
                 print(f'{output}\n\n\n')
-                conv_output.write("\n" + output )
+                conv_output.write(f'{prompt}\n')
+                conv_output.write(f'{output}\n\n')
                 
                 if "yes" in output :
                     score.append(1)
@@ -230,6 +231,7 @@ def config():
     parser.add_argument("--conv_mode", type=str, default="llava_v1")
     parser.add_argument("--max_instances", type=int, default=16)
     parser.add_argument("--cot_type", type=str, default=None)
+    # parser.add_argument("--attn_implementation", type=str, default="flash_attention_2")
     return parser.parse_args()
 
 if __name__ == "__main__":

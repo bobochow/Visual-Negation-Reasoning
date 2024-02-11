@@ -163,3 +163,4 @@ outputs/
 weight/
 data
 .vscode/
+llava_eval/

@@ -64,7 +64,7 @@ def main(args):
     else:
         conv_output_file = os.path.join(args.output_dir, f"{args.dataset}_{args.model_name}_seed-{args.seed}_{args.extra_info}.txt")
     os.makedirs(args.output_dir) if not os.path.exists(args.output_dir) else None
-    conv_output = open(conv_output_file, "a")
+    conv_output = open(conv_output_file, "w")
     
     cot = None
     if args.cot_type == 'cot':
@@ -137,7 +137,8 @@ def main(args):
                 output = output.lower().strip()
                 print(f'{prompt}\n')
                 print(f'{output}\n\n\n')
-                conv_output.write("\n" + output )
+                conv_output.write(f'{prompt}\n'  )
+                conv_output.write(f'{output}\n\n' )
                 
                 if "yes" in output :
                     score.append(1)
@@ -185,7 +186,7 @@ def config():
     parser.add_argument("--data_path", default="./data", type=str)
     parser.add_argument("--batch_size", default=8, type=int)
     parser.add_argument("--num_workers", default=4, type=int)
-    parser.add_argument("--model-path", type=str, default="Salesforce/blip2-flan-t5-xl")
+    parser.add_argument("--model-path", type=str, default="Salesforce/blip2-flan-t5-xxl")
     parser.add_argument("--model-base", type=str, default=None)
     parser.add_argument("--model_name", default="blip2", choices=["blip2", "llava"], type=str)
     parser.add_argument("--dataset", default="Negation_Logic", type=str,
