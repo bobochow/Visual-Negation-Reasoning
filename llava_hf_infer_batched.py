@@ -49,8 +49,8 @@ def main(args):
     model = LlavaForConditionalGeneration.from_pretrained(args.model_path,torch_dtype=torch.float16,device_map=args.device_map)
 
     processor = AutoProcessor.from_pretrained(args.model_path, pad_token="<pad>")
-    
-    dataset = get_dataset(args.dataset, image_preprocess=None, download=args.download,max_instances=args.max_instances)
+
+    dataset = get_dataset(args.dataset, image_preprocess=None, download=args.download,max_instances=args.max_instances,subclausal=args.subclausal)
 
     collator = DataCollatorForVisualTextGeneration()
     data_loader = DataLoader(dataset, collate_fn=collator, batch_size=args.batch_size, num_workers=args.num_workers, shuffle=False)
@@ -60,6 +60,10 @@ def main(args):
     else:
         conv_output_file = os.path.join(args.output_dir, f"{args.dataset}_{args.model_name}_seed-{args.seed}_{args.extra_info}.txt")
     os.makedirs(args.output_dir) if not os.path.exists(args.output_dir) else None
+    
+    conv_output = open(conv_output_file, 'w')
+    conv_output.close()
+    
     conv_output = open(conv_output_file, "a")
     
     conv=conv_templates[args.conv_mode].copy()
@@ -150,8 +154,8 @@ def main(args):
             
             for output, prompt in zip(outputs,prompts):
                 output = output.lower().strip()
-                print(f'{prompt}\n')
-                print(f'{output}\n\n\n')
+                # print(f'{prompt}\n')
+                # print(f'{output}\n\n\n')
                 conv_output.write(f'{prompt}\n')
                 conv_output.write(f'{output}\n\n')
                 
@@ -231,6 +235,7 @@ def config():
     parser.add_argument("--conv_mode", type=str, default="llava_v1")
     parser.add_argument("--max_instances", type=int, default=16)
     parser.add_argument("--cot_type", type=str, default=None)
+    parser.add_argument("--subclausal", action="store_true",default=False)
     # parser.add_argument("--attn_implementation", type=str, default="flash_attention_2")
     return parser.parse_args()
 

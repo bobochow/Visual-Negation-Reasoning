@@ -222,7 +222,7 @@ class VG_Relation(Dataset):
 
 
 class VG_Attribution(Dataset):
-    def __init__(self, image_preprocess, max_instances: int, logic=False, attribute_ownership=False, root_dir=CASSP_ROOT, download=False,
+    def __init__(self, image_preprocess, max_instances: int, subclausal, logic=False,  attribute_ownership=False, root_dir=CASSP_ROOT, download=False,
                  *args, **kwargs):
         '''
         image_preprocess: a function that takes in a PIL image and returns a tensor.
@@ -232,6 +232,7 @@ class VG_Attribution(Dataset):
         '''
         self.root_dir = root_dir
         self.logic = logic
+        self.subclausal = subclausal
         self.attribute_ownership = attribute_ownership
         annotation_file = os.path.join(root_dir, "visual_genome_attribution.json")
         image_dir = os.path.join(root_dir, "images")
@@ -261,15 +262,19 @@ class VG_Attribution(Dataset):
         self.all_attributes = [f"{item['attributes'][0]}_{item['attributes'][1]}" for item in self.dataset]
         self.image_preprocess = image_preprocess
         self.top_2 = False
-        if self.attribute_ownership:
-            self.cla_name = ["exchange", "separate"]
-            self.top_2 = True
-        elif self.logic:
-            self.cla_name = ["negative"]
+        
+        if self.subclausal:
+            self.cla_name = ["negative1", "negative2"]
         else:
-            self.cla_name = ["exchange"]
+            if self.attribute_ownership:
+                self.cla_name = ["exchange", "separate"]
+                self.top_2 = True
+            elif self.logic:
+                self.cla_name = ["negative"]
+            else:
+                self.cla_name = ["exchange"]
 
-        self.cla_name.insert(0, "correct")
+            self.cla_name.insert(0, "correct")
         self.targets = [np.repeat(np.diag(np.ones(len(self.cla_name)))[i][None, :], len(self.dataset), axis=0)
                         for i in range(len(self.cla_name))]
         
@@ -298,7 +303,7 @@ class VG_Attribution(Dataset):
                                                                                    test_case["attributes"][0],
                                                                                    test_case["attributes"][1])
             caption_options = [true_caption, false_caption, split_semantic]
-        elif self.logic:
+        elif self.logic and not self.subclausal:
             positive = "the {} is {} and the {} is {}".format(test_case["obj1_name"], test_case["attributes"][0],
                                                               test_case["obj2_name"], test_case["attributes"][1])
             negative = "the {} is not {} and the {} is not {}".format(test_case["obj1_name"],
@@ -317,8 +322,20 @@ class VG_Attribution(Dataset):
                 else:
                     opt = self.question.format(opt)
                 caption_options.append(opt)
+        
+        elif self.subclausal:
+            negative1 = "Is the {} not {} and the {} {}?".format(test_case["obj1_name"],
+                                                                    test_case["attributes"][0],
+                                                                    test_case["obj2_name"],
+                                                                    test_case["attributes"][1])
             
+            negative2 = "Is the {} {} and the {} not {}?".format(test_case["obj1_name"],
+                                                                    test_case["attributes"][0],
+                                                                    test_case["obj2_name"],
+                                                                    test_case["attributes"][1])
             
+            caption_options = [negative1, negative2]
+        
         else:
             true_caption = test_case["true_caption"]
             false_caption = test_case["false_caption"]
