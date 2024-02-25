@@ -28,5 +28,8 @@ export CUDA_VISIBLE_DEVICES=2
 
 # python llava_hf_infer_batched.py --model-path llava-hf/llava-1.5-7b-hf --batch_size 16 --max_instances -1 --output_dir ./outputs/llava_1.5_7b_hf/subclausal/zeroshot  --extra_info subclausal_zeroshot --subclausal
 
-python llava_hf_infer_batched.py --model-path llava-hf/llava-1.5-7b-hf --batch_size 8 --max_instances -1 --output_dir ./outputs/llava_1.5_7b_hf/subclausal/zeroshot_cot  --extra_info subclausal_zeroshot_cot --subclausal --cot_type cot
+# python llava_hf_infer_batched.py --model-path llava-hf/llava-1.5-7b-hf --batch_size 8 --max_instances -1 --output_dir ./outputs/llava_1.5_7b_hf/subclausal/zeroshot_cot  --extra_info subclausal_zeroshot_cot --subclausal --cot_type cot
+
+
+CUDA_VISIBLE_DEVICES=2 python llava_cot_decoding_batch.py --model-path llava-hf/llava-1.5-7b-hf --batch_size 8 --max_instances 32 --output_dir ./outputs/llava_1.5_7b_hf/zeroshot_cot_decoding  --extra_info subclausal_zeroshot_cot --num_branches 10
 

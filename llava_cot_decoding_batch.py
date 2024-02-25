@@ -1,24 +1,136 @@
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+import torch
+from tqdm import tqdm
+from transformers import AutoProcessor, LlavaForConditionalGeneration
+from PIL import Image
+import requests
+import numpy as np
+from dataclasses import dataclass, field
 import argparse
 import copy
-import os
 import pandas as pd
-import numpy as np
-
-from dataclasses import dataclass, field
 
 from torch.utils.data import Dataset,DataLoader
-import torch
 
 from visnr.datasets import get_dataset
 from visnr import set_seed, save_scores, datasets
+from visnr.conversation import conv_templates
+from visnr.constants import DEFAULT_IMAGE_TOKEN
+
 
 from tqdm import tqdm
 from typing import List, Tuple
 
 from PIL import Image
-from transformers import AutoProcessor, LlavaForConditionalGeneration
-from visnr.conversation import conv_templates
-from visnr.constants import DEFAULT_IMAGE_TOKEN
+
+# Get our initial top k tokens
+def get_topk_tokens(model, inputs, num_branches=10):
+        
+    # Generate logits for the next token after the prompt 
+    with torch.no_grad():
+        outputs = model(**inputs,return_dict=True)
+        next_token_logits = outputs.logits[:, -1, :] # batch, seq_len, vocab_size
+    
+    # Apply softmax to convert logits to probabilities
+    probabilities = torch.softmax(next_token_logits, dim=-1)
+
+    # Get the top k tokens and their probabilities
+    topk_values, topk_indicies = torch.topk(probabilities, num_branches) # batch, k
+
+    return topk_values, topk_indicies
+
+
+# Generate a full response from the model and log the difference in probabilities between the top two tokens
+def generate_response(model, processor, inputs, max_length=1024, batch=1):
+
+    # Create variables to store our response and each token's probabilities
+    # response = []
+    response = [[] for _ in range(batch)]
+    # response_probs = []
+    response_probs = [[] for _ in range(batch)]
+    
+    unfinished_sequences = torch.ones(inputs['input_ids'].shape[0], dtype=torch.long, device=inputs['input_ids'].device)
+    
+    pad_token_id = processor.tokenizer.pad_token_id
+    
+    eos_token_id_tensor = torch.tensor([processor.tokenizer.eos_token_id]).to(inputs['input_ids'].device)
+    
+    # Loop through the max length of the response
+    for i in range(max_length):
+
+        # Generate the logits for the next token
+        topk_values, topk_indices = get_topk_tokens(model, inputs, num_branches=2)
+
+        # Get the difference in probabilities between the top two tokens
+        prob_diff = topk_values[:, 0] - topk_values[:, 1]
+        
+        # response_probs.append(prob_diff.item())  # Convert tensor to scalar
+
+        next_tokens = topk_indices[:, 0] * unfinished_sequences + pad_token_id * (1 - unfinished_sequences)
+        
+        for i, p in enumerate(prob_diff.cpu().numpy().tolist()):
+            response_probs[i].append(p)
+        
+        # Append the most likely token to the response
+        # response.append(topk_indices[:, 0])
+        for i, indices in enumerate(topk_indices):
+            response[i].append(indices[0])
+
+        # Stop if this token is the end of sequence token        
+        unfinished_sequences = unfinished_sequences.mul(
+                    next_tokens.tile(eos_token_id_tensor.shape[0], 1).ne(eos_token_id_tensor.unsqueeze(1)).prod(dim=0)
+                )
+        # stop when each sentence is finished
+        if unfinished_sequences.max() == 0:
+            break
+
+        # Add the token to the input for the next iteration
+        inputs['input_ids'] = torch.cat([inputs['input_ids'], next_tokens[:, None]], dim=1)
+        inputs['attention_mask'] = torch.cat(
+                    [inputs['attention_mask'], inputs['attention_mask'].new_ones((inputs['attention_mask'].shape[0], 1))], dim=-1
+                )
+
+    return inputs['input_ids'], response_probs
+
+# Generate all branching responses
+def generate_branching_responses(model, processor, inputs, num_branches=10, max_length=500, batch=1):
+
+    # First we tokenize the prompt
+    # inputs = tokenizer(prompt, return_tensors="pt")
+    input_token_len = inputs['input_ids'].shape[1]
+
+    # Get our initial top k tokens
+    _, topk_indices = get_topk_tokens(model, inputs, num_branches) # batch, k
+
+    # Create a list to store our responses and each token's probabilities
+    # responses = []
+    responses = [[] for _ in range(batch)]
+    # response_probs = []
+    response_probs = [[] for _ in range(batch)]
+    for k in tqdm(range(num_branches)):
+        
+        # Add the kth most likely token to this new branch
+        new_input_ids = inputs.copy()
+        topk_token= topk_indices[:, k].unsqueeze(-1)
+        new_input_ids['input_ids'] = torch.cat([inputs['input_ids'], topk_token], dim=1)
+        new_input_ids['attention_mask'] = torch.cat([inputs['attention_mask'], torch.ones(batch,1).to('cuda',dtype=torch.int64)], dim=1)
+        # Generate a response and log the difference in probabilities between the top two tokens
+        response, probs = generate_response(model, processor, new_input_ids, max_length, batch)
+        
+        # Append the response to our list
+        # responses.append(processor.batch_decode(response))
+        # responses.append(processor.batch_decode(response[:, input_token_len:]))
+        outputs = processor.batch_decode(response[:, input_token_len:], skip_special_tokens=True)
+        for i, r in enumerate(outputs):
+            responses[i].append(r)
+
+        # Determine the average difference in probabilities for this response
+        # response_probs.append(sum(probs) / len(probs))
+        for i, p in enumerate(probs):
+            response_probs[i].append(sum(p) / len(p))
+
+    return responses, response_probs
 
 @dataclass
 class DataCollatorForVisualTextGeneration(object):
@@ -85,37 +197,11 @@ def main(args):
     
     
     scores=[]
-    
     for images_list, captions_list in tqdm(data_loader, desc="LLaVA Negation logic Evaluating"):
-        
         batch_scores = []
         for captions in captions_list:
             score=[]
             cot_outputs=[]
-            if args.cot_type in {'cot','DNeg','SG'}:
-                cot_prompts=[]
-                for i in range(len(captions)):
-                    
-                    if args.cot_type == 'cot':
-                        qs_ =  DEFAULT_IMAGE_TOKEN + '\n' +  cot
-                    elif args.cot_type in{'DNeg','SG'}:
-                        qs_ =  DEFAULT_IMAGE_TOKEN + '\n' + captions[i] + '\n' + cot
-                    sys_conv = copy.deepcopy(conv)
-                    sys_conv.append_message(conv.roles[0], qs_)
-                    sys_conv.append_message(conv.roles[1], None)
-                    cot_prompt = sys_conv.get_prompt()
-                    cot_prompts.append(cot_prompt)
-                
-                with torch.inference_mode():
-                    cot_inputs = processor(cot_prompts, images=images_list, return_tensors="pt", padding=True).to(dtype=torch.float16, device=args.device, non_blocking=True)
-                    cot_output_ids = model.generate(
-                        **cot_inputs,
-                        do_sample=True if args.temperature > 0 else False,
-                        temperature=args.temperature,
-                        max_new_tokens=512)
-                
-                input_token_len = cot_inputs['input_ids'].shape[1]
-                cot_outputs = processor.batch_decode(cot_output_ids[:, input_token_len:], skip_special_tokens=True)
             
             prompts=[]
             for i, opt in enumerate(captions):
@@ -139,34 +225,34 @@ def main(args):
             
             inputs = processor(prompts, images=images_list, return_tensors="pt", padding=True).to(dtype=torch.float16, device=args.device, non_blocking=True)
             
-            with torch.inference_mode():
-                output_ids = model.generate(
-                    **inputs,
-                    do_sample=True if args.temperature > 0 else False,
-                    temperature=args.temperature,
-                    max_new_tokens=1024)
+            responses, response_probs = generate_branching_responses(model, processor, inputs, num_branches=args.num_branches, max_length=args.max_new_tokens, batch=len(captions))
             
-            input_token_len = inputs['input_ids'].shape[1]
             
-            outputs = processor.batch_decode(output_ids[:, input_token_len:], skip_special_tokens=True)
-            
-            for output, prompt in zip(outputs,prompts):
-                output = output.lower().strip()
-                # print(f'{prompt}\n')
-                # print(f'{output}\n\n\n')
-                conv_output.write(f'{prompt}\n')
-                conv_output.write(f'{output}\n\n')
-                
-                if "yes" in output :
+            for i in range(len(captions)):
+                # print('Prompt:', prompts[i])
+                pos_score = 0.0
+                neg_score = 0.0
+                for k, response, prob in zip(range(len(responses[i])), responses[i], response_probs[i]):
+                    
+                    # print(f'\nResponse k={k}:\n\n', response)
+                    # print('\nScore:', prob)
+                    if 'yes' in response.lower().strip():
+                        pos_score += prob
+                    elif 'no' in response.lower().strip() and 'not' not in response.lower().strip():
+                        neg_score += prob
+                conv_output.write(f'\nPrompt: {prompts[i]}\n')
+                if pos_score > neg_score:
                     score.append(1)
-                elif "no" in output:
-                    score.append(0)
+                    for k, response, prob in zip(range(len(responses[i])), responses[i], response_probs[i]):
+                        
+                        conv_output.write(f'\nResponse k={k}:\n\n{response}')
+                        conv_output.write(f'\nScore: {prob}')
                 else:
                     score.append(0)
-                    print(f"There are not \"Yes\" or \"No\" in answer. \n The answer is: {output}\n")
+                    
+            
             batch_scores.append(score)
-        
-        
+
         batch_scores_flip=[list(item) for item in zip(*batch_scores)]
         scores.append(batch_scores_flip)
     
@@ -191,9 +277,6 @@ def main(args):
 
     else:
         df.to_csv(output_file)
-
-    if args.save_scores:
-        save_scores(scores, args)
 
 
 def config():
@@ -220,20 +303,18 @@ def config():
 
     parser.add_argument("--download", action="store_true",
                         help="Download the datasets_zoo if it doesn't exist. (Default: False)")
-    parser.add_argument("--save_scores", action="store_false",
-                        help="Save the scores for the retrieval. (Default: True)")
+    
     parser.add_argument("--output_dir", default="./outputs", type=str)
     parser.add_argument("--extra_info", default=None, type=str)
-    parser.add_argument("--num-chunks", type=int, default=1)
-    parser.add_argument("--chunk-idx", type=int, default=0)
-    parser.add_argument("--temperature", type=float, default=0.7)
-    parser.add_argument("--top_p", type=float, default=None)
-    parser.add_argument("--num_beams", type=int, default=1)
+    
+    
     parser.add_argument("--max_new_tokens", type=int, default=1024)
     parser.add_argument("--conv_mode", type=str, default="llava_v1")
     parser.add_argument("--max_instances", type=int, default=16)
     parser.add_argument("--cot_type", type=str, default=None)
     parser.add_argument("--subclausal", action="store_true",default=False)
+    parser.add_argument("--num_branches", type=int, default=10)
+    
     # parser.add_argument("--attn_implementation", type=str, default="flash_attention_2")
     return parser.parse_args()
 

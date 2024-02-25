@@ -5,6 +5,7 @@ from tqdm import tqdm
 from transformers import AutoProcessor, LlavaForConditionalGeneration, AutoTokenizer
 from PIL import Image
 import requests
+import numpy as np
 
 # Get our initial top k tokens
 def get_topk_tokens(model, inputs, num_branches=10):
@@ -29,6 +30,7 @@ def generate_response(model, processor, inputs, max_length=1024, batch=1):
     # Create variables to store our response and each token's probabilities
     response = []
     response_probs = []
+    
     # Loop through the max length of the response
     for i in range(max_length):
 
@@ -37,12 +39,14 @@ def generate_response(model, processor, inputs, max_length=1024, batch=1):
 
         # Get the difference in probabilities between the top two tokens
         prob_diff = topk_values[:, 0] - topk_values[:, 1]
+        
         response_probs.append(prob_diff.item())  # Convert tensor to scalar
 
         # Append the most likely token to the response
         response.append(topk_indices[:, 0])
-
+        
         # Stop if this token is the end of sequence token
+        
         if topk_indices[:, 0] == processor.tokenizer.eos_token_id:
             break
 
@@ -78,7 +82,7 @@ def generate_branching_responses(model, processor, inputs, num_branches=10, max_
         # Append the response to our list
         # responses.append(processor.batch_decode(response))
         responses.append(processor.batch_decode(response[:, input_token_len:]))
-
+        
         # Determine the average difference in probabilities for this response
         response_probs.append(sum(probs) / len(probs))
 
@@ -90,30 +94,17 @@ model = LlavaForConditionalGeneration.from_pretrained(model_id, torch_dtype=torc
 # tokenizer = AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
-prompts = [
-            "USER: <image>\nIs the door not open and the not man crouched? Answer yes or no.\nASSISTANT:",
-            "USER: <image>\nIs the banana unpeeled and the light colored plate? Answer yes or no.\nASSISTANT:",
-        ]
-# image1 = Image.open(requests.get("https://llava-vl.github.io/static/images/view.jpg", stream=True).raw)
-# image2 = Image.open(requests.get("http://images.cocodataset.org/val2017/000000039769.jpg", stream=True).raw)
-
-image1 = Image.open('data/prerelease_bow/images/2375361.jpg')
-image2 = Image.open('data/prerelease_bow/images/2410049.jpg')
-
-inputs = processor(prompts, images=[image1, image2], return_tensors="pt", padding=True).to('cuda', torch.float16)
-
-# prompt = "USER: <image>\nIs the door not open and the not man crouched? Answer yes or no.\nASSISTANT:"
-# raw_image = Image.open('data/prerelease_bow/images/2410049.jpg')
-# inputs = processor(prompt, raw_image, return_tensors="pt").to('cuda', torch.float16)
-
+prompt = "USER: <image>\nIs the door not open and the man not crouched? Answer yes or no.\nASSISTANT:"
+raw_image = Image.open('data/prerelease_bow/images/2410049.jpg')
+inputs = processor(prompt, raw_image, return_tensors="pt").to('cuda', torch.float16)
+batch=1
 # Generate branching responses
-responses, response_probs = generate_branching_responses(model, processor, inputs, num_branches=5, max_length=1024, batch=2)
+responses, response_probs = generate_branching_responses(model, processor, inputs, num_branches=5, max_length=1024, batch=batch)
 
 # Print responses and scores
 print('Prompt:', prompt)
+
 for k, response, prob in zip(range(len(responses)), responses, response_probs):
     
-    for r in response:
-        print(f'\nResponse k={k}:\n\n', r)
-        print('\nScore:', prob)
-    
+    print(f'\nResponse k={k}:\n\n', response[0])
+    print('\nScore:', prob)
