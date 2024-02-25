@@ -56,7 +56,7 @@ def main(args):
     processor = InstructBlipProcessor.from_pretrained(args.model_path)
     
     
-    dataset = get_dataset(args.dataset, image_preprocess=None, download=args.download,max_instances=args.max_instances)
+    dataset = get_dataset(args.dataset, image_preprocess=None, download=args.download,max_instances=args.max_instances,subclausal=args.subclausal)
 
     collator = DataCollatorForVisualTextGeneration()
     data_loader = DataLoader(dataset, collate_fn=collator, batch_size=args.batch_size, num_workers=args.num_workers, shuffle=False)
@@ -66,6 +66,9 @@ def main(args):
     else:
         conv_output_file = os.path.join(args.output_dir, f"{args.dataset}_{args.model_name}_seed-{args.seed}_{args.extra_info}.txt")
     os.makedirs(args.output_dir) if not os.path.exists(args.output_dir) else None
+    
+    conv_output = open(conv_output_file, 'w')
+    conv_output.close()
     conv_output = open(conv_output_file, "a")
     
 
@@ -83,6 +86,8 @@ def main(args):
         f"Firstly, let's think if the negation form of the question is consistent with the content in the image.\n" \
         f"Then, let's think if the double negation of the question is consistent with the content in the image.\n" \
         f"Finally, let's think if the question itself is correct.\n" 
+    elif args.cot_type == 'hint':
+        cot=f"Note that if there is a negation in the question, you should answer the question with the opposite result of the affirmative form.\n"
     
     scores=[]
     
@@ -141,6 +146,7 @@ def main(args):
                 output = output.lower().strip()
                 # print(f'{prompt}\n')
                 # print(f'{output}\n\n\n')
+                conv_output.write(f'{prompt}\n')
                 conv_output.write("\n" + output )
                 
                 if "yes" in output :
@@ -178,8 +184,8 @@ def main(args):
     else:
         df.to_csv(output_file)
 
-    if args.save_scores:
-        save_scores(scores, args)
+    # if args.save_scores:
+    #     save_scores(scores, args)
 
 
 def config():
@@ -219,6 +225,9 @@ def config():
     parser.add_argument("--conv_mode", type=str, default="llava_v1")
     parser.add_argument("--max_instances", type=int, default=16)
     parser.add_argument("--cot_type", type=str, default=None)
+    parser.add_argument("--subclausal", action="store_true",default=False)
+    
+    
     return parser.parse_args()
 
 if __name__ == "__main__":

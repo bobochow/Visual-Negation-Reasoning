@@ -1,11 +1,13 @@
 #!/bin/bash
-export CUDA_VISIBLE_DEVICES=1
+export CUDA_VISIBLE_DEVICES=2
 
-CUDA_LAUNCH_BLOCKING=1 python -m llava_mme_eval_cot_decoding_batch \
-    --model-path llava-hf/llava-1.5-7b-hf \
-    --question-file llava_eval/MME/llava_mme.jsonl \
+question-file=llava_eval/MME/llava_mme_gt.jsonl
+
+python -m llava_hf_mme_eval \
+    --model-path llava-hf/llava-1.5-13b-hf \
+    --question-file llava_eval/MME/llava_mme_gt.jsonl \
     --image-folder data/MME_Benchmark_release_version \
-    --answers-file llava_eval/MME/answers/llava-1.5-7b-hf-cot-decode.jsonl \
+    --answers-file llava_eval/MME/answers/llava-1.5-13b-hf.jsonl \
     --temperature 0 \
     --conv-mode vicuna_v1 \
     --batch_size 4 \
@@ -13,8 +15,8 @@ CUDA_LAUNCH_BLOCKING=1 python -m llava_mme_eval_cot_decoding_batch \
 
 # cd llava_eval/MME
 
-# python convert_answer_to_mme.py --experiment llava-1.5-7b-hf
+# python convert_answer_to_mme.py --experiment llava-1.5-13b-hf.jsonl
 
 # cd eval_tool
 
-# python calculation.py --results_dir answers/llava-1.5-7b-hf
+# python calculation.py --results_dir answers/llava-1.5-13b-hf

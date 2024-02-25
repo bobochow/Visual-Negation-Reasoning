@@ -228,6 +228,7 @@ def eval_model(args):
 
     for (idx_list, qs_list, images_list) in tqdm(data_loader, desc="LLaVA MME Benchmark Evaluating"):
         cot_outputs=[]
+        cot_prompts=[]
         
         prompts=[]
         for i, opt in enumerate(qs_list):

@@ -51,19 +51,20 @@ class CustomDataset(Dataset):
         image_file = line["image"]
         qs = line["text"]
         idx = line["question_id"]
+        gt = line["GT"]
         
         image = Image.open(os.path.join(self.image_folder, image_file)).convert('RGB')
         
-        return idx, qs, image
+        return idx, qs, image, gt
 
     def __len__(self):
         return len(self.questions)
 
 
 def collate_fn(batch):
-    idx, qs, image = zip(*batch)
+    idx, qs, image, gt = zip(*batch)
     
-    return list(idx), list(qs), list(image)
+    return list(idx), list(qs), list(image), list(gt)
 
 
 # DataLoader
@@ -117,7 +118,7 @@ def eval_model(args):
 
     data_loader = create_data_loader(questions, args.image_folder, batch_size=args.batch_size)
 
-    for (idx_list, qs_list, images_list) in tqdm(data_loader, desc="LLaVA MME Benchmark Evaluating"):
+    for (idx_list, qs_list, images_list, gt_list) in tqdm(data_loader, desc="LLaVA MME Benchmark Evaluating"):
         
         cot_outputs=[]
         if args.cot_type in {'cot','DNeg','SG'}:
@@ -185,7 +186,7 @@ def eval_model(args):
         
         outputs = processor.batch_decode(output_ids[:, input_token_len:], skip_special_tokens=True)
         
-        for idx, cur_prompt, output, prompt in zip(idx_list, qs_list, outputs, prompts):
+        for idx, cur_prompt, output, gt in zip(idx_list, qs_list, outputs, gt_list):
             output = output.strip()
             # print(f'{prompt}\n')
             # print(f'{output}\n\n\n')
@@ -196,6 +197,7 @@ def eval_model(args):
                                    "text": output,
                                    "answer_id": ans_id,
                                    "model_id": model_name,
+                                   "GT": gt,
                                    "metadata": {}}) + "\n")
         #     conv_output.write(f'{prompt}\n')
         #     conv_output.write(f'{output}\n\n')

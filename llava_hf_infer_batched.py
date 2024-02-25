@@ -192,8 +192,8 @@ def main(args):
     else:
         df.to_csv(output_file)
 
-    if args.save_scores:
-        save_scores(scores, args)
+    # if args.save_scores:
+    #     save_scores(scores, args)
 
 
 def config():

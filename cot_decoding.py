@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import torch
 from tqdm import tqdm
 from transformers import AutoProcessor, LlavaForConditionalGeneration, AutoTokenizer
@@ -94,7 +94,7 @@ model = LlavaForConditionalGeneration.from_pretrained(model_id, torch_dtype=torc
 # tokenizer = AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
-prompt = "USER: <image>\nIs the door not open and the man not crouched? Answer yes or no.\nASSISTANT:"
+prompt = "USER: <image>\nIs the door open and the man not crouched? Answer yes or no.\nASSISTANT:"
 raw_image = Image.open('data/prerelease_bow/images/2410049.jpg')
 inputs = processor(prompt, raw_image, return_tensors="pt").to('cuda', torch.float16)
 batch=1
