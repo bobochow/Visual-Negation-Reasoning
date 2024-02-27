@@ -1,5 +1,4 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import torch
 from tqdm import tqdm
 from transformers import AutoProcessor, LlavaForConditionalGeneration
@@ -232,6 +231,7 @@ def main(args):
                 # print('Prompt:', prompts[i])
                 pos_score = 0.0
                 neg_score = 0.0
+                conv_output.write(f'\nPrompt: {prompts[i]}\n')
                 for k, response, prob in zip(range(len(responses[i])), responses[i], response_probs[i]):
                     
                     # print(f'\nResponse k={k}:\n\n', response)
@@ -240,13 +240,12 @@ def main(args):
                         pos_score += prob
                     elif 'no' in response.lower().strip() and 'not' not in response.lower().strip():
                         neg_score += prob
-                conv_output.write(f'\nPrompt: {prompts[i]}\n')
+                    conv_output.write(f'\nResponse k={k}:\n\n{response}')
+                    conv_output.write(f'\nScore: {prob}')
+                
                 if pos_score > neg_score:
                     score.append(1)
-                    for k, response, prob in zip(range(len(responses[i])), responses[i], response_probs[i]):
-                        
-                        conv_output.write(f'\nResponse k={k}:\n\n{response}')
-                        conv_output.write(f'\nScore: {prob}')
+                    
                 else:
                     score.append(0)
                     
@@ -315,7 +314,6 @@ def config():
     parser.add_argument("--subclausal", action="store_true",default=False)
     parser.add_argument("--num_branches", type=int, default=10)
     
-    # parser.add_argument("--attn_implementation", type=str, default="flash_attention_2")
     return parser.parse_args()
 
 if __name__ == "__main__":

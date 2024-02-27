@@ -70,6 +70,7 @@ def generate_response(model, processor, inputs, max_length=1024, batch=1):
 
         # Add the token to the input for the next iteration
         inputs['input_ids'] = torch.cat([inputs['input_ids'], next_tokens[:, None]], dim=1)
+        
         inputs['attention_mask'] = torch.cat(
                     [inputs['attention_mask'], inputs['attention_mask'].new_ones((inputs['attention_mask'].shape[0], 1))], dim=-1
                 )
@@ -122,8 +123,8 @@ model = LlavaForConditionalGeneration.from_pretrained(model_id, torch_dtype=torc
 processor = AutoProcessor.from_pretrained(model_id)
 
 prompts = [
-            "USER: <image>\nIs the door not open and the not man crouched? Answer yes or no.\nASSISTANT:",
-            "USER: <image>\nIs the banana unpeeled and the light colored plate? Answer yes or no.\nASSISTANT:",
+            "USER: <image>\nIs the door open and the man crouched? Answer the question using a single word or phrase.\nASSISTANT:",
+            "USER: <image>\nIs the banana unpeeled and the light colored plate? Answer the question using a single word or phrase.\nASSISTANT:",
         ]
 
 image1 = Image.open('data/prerelease_bow/images/2375361.jpg')
@@ -147,4 +148,3 @@ for i in range(batch):
         
         print(f'\nResponse k={k}:\n\n', response)
         print('\nScore:', prob)
-    

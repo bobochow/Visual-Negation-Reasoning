@@ -94,17 +94,41 @@ model = LlavaForConditionalGeneration.from_pretrained(model_id, torch_dtype=torc
 # tokenizer = AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
-prompt = "USER: <image>\nIs the door open and the man not crouched? Answer yes or no.\nASSISTANT:"
-raw_image = Image.open('data/prerelease_bow/images/2410049.jpg')
-inputs = processor(prompt, raw_image, return_tensors="pt").to('cuda', torch.float16)
-batch=1
-# Generate branching responses
-responses, response_probs = generate_branching_responses(model, processor, inputs, num_branches=5, max_length=1024, batch=batch)
+# prompt = "USER: <image>\nIs the door open and the man not crouched? Answer yes or no.\nASSISTANT:"
+# raw_image = Image.open('data/prerelease_bow/images/2410049.jpg')
 
+# prompt = "USER: <image>\nIs a python code shown in the picture?\nASSISTANT:"
+prompt = "USER: <image>\nIs a c++ code shown in the picture?\nASSISTANT:"
+raw_image = Image.open('data/MME_Benchmark_release_version/code_reasoning/0020.png')
+
+inputs = processor(prompt, raw_image, return_tensors="pt").to('cuda', torch.float16)
+
+# Generate branching responses
+responses, response_probs = generate_branching_responses(model, processor, inputs, num_branches=10, max_length=128, batch=1)
+
+final_responses = f""
 # Print responses and scores
-print('Prompt:', prompt)
+# print('Prompt:', prompt)
 
 for k, response, prob in zip(range(len(responses)), responses, response_probs):
     
-    print(f'\nResponse k={k}:\n\n', response[0])
-    print('\nScore:', prob)
+    # print(f'\nResponse k={k}:\n\n', response[0])
+    # print('\nScore:', prob)
+    final_responses = final_responses +f"\nResponse k={k}: {response[0]}\nScore: {prob} " 
+
+final_prompt= f"USER: I will give you a image , corresponding question and all possible responses with scores, you should give the final answer.\n For example, Question: Is the cat white in the image?\n Response k=0: Yes.\n Score: 0.7\n Response k=1: No.\nScore: 0.6\n Response k=2: Yes. \nScore: 0.3\n Response k=3: No. \nScore: 0.5\n\n The total score of answer 'yes' is 0.7 + 0.3=1.\n The total scores of answer 'no' is 0.6 + 0.5=1.1 .\n\nSo the final answer is 'No'.\n \nQuestion: <image>\nIs a python code shown in the picture? Here are all possible responses to this question, along with their corresponding scores.\n {final_responses} \n\n The total score of answer 'yes' is <score>.\n\n The total scores of answer 'no' is <score>.\n\n So the final answer is ?\nASSISTANT:\n"
+
+final_inputs = processor(final_prompt, raw_image, return_tensors="pt").to('cuda', torch.float16)
+
+output_ids = model.generate(
+                    **final_inputs,
+                    do_sample=False,
+                    temperature=0,
+                    max_new_tokens=128)
+            
+input_token_len = final_inputs['input_ids'].shape[1]
+
+outputs = processor.batch_decode(output_ids[:, input_token_len:], skip_special_tokens=True)
+
+print('\nFinal Prompt:', final_prompt)
+print('\nFinal answer:', outputs[0])
