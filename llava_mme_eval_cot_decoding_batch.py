@@ -9,7 +9,7 @@ import numpy as np
 from dataclasses import dataclass, field
 import argparse
 import copy
-
+import re
 from torch.utils.data import Dataset,DataLoader
 
 from visnr.datasets import get_dataset
@@ -254,6 +254,7 @@ def eval_model(args):
         
         responses, response_probs = generate_branching_responses(model, processor, inputs, num_branches=args.num_branches, max_length=args.max_new_tokens, batch=len(qs_list))
         
+        
         for i,(idx, cur_prompt, output, prompt) in enumerate(zip(idx_list, qs_list, responses, prompts)):
             # print('Prompt:', prompts[i])
             pos_score = 0.0
@@ -265,7 +266,7 @@ def eval_model(args):
                 # print('\nScore:', prob)
                 if 'yes' in response.lower().strip():
                     pos_score += prob
-                elif 'no' in response.lower().strip() and 'not' not in response.lower().strip():
+                elif re.search(r'\bno\b', response, re.IGNORECASE):
                     neg_score += prob
             if pos_score > neg_score:
                 ans_file.write(json.dumps({"question_id": idx,
@@ -292,22 +293,20 @@ if __name__ == "__main__":
     parser.add_argument("--image-folder", type=str, default="data/MME_Benchmark_release_version")
     parser.add_argument("--device", default="cuda", type=str)
     parser.add_argument("--device_map", default="auto", type=str)
-    parser.add_argument("--data_path", default="./data", type=str)
-    parser.add_argument("--batch_size", default=8, type=int)
+    parser.add_argument("--batch_size", default=12, type=int)
     parser.add_argument("--num_workers", default=4, type=int)
     
-    parser.add_argument("--question-file", type=str, default="llava_eval/MME/llava_mme.jsonl")
-    parser.add_argument("--answers-file", type=str, default="llava_eval/MME/answers/test.jsonl")
-    parser.add_argument("--temperature", type=float, default=0)
+    parser.add_argument("--question-file", type=str, default="llava_eval/MME/llava_mme_gt.jsonl")
+    parser.add_argument("--answers-file", type=str, default="llava_eval/MME/answers/llava-1.5-7b-hf-cot-decoding.jsonl")
     
-    parser.add_argument("--max_new_tokens", type=int, default=1024)
+    parser.add_argument("--max_new_tokens", type=int, default=500)
     parser.add_argument("--conv-mode", type=str, default="llava_v1")
     parser.add_argument("--num-chunks", type=int, default=1)
     parser.add_argument("--chunk-idx", type=int, default=0)
-    parser.add_argument("--max_instances", type=int, default=16)
+    
     parser.add_argument("--cot_type", type=str, default=None)
     
-    parser.add_argument("--num_branches", type=int, default=10)
+    parser.add_argument("--num_branches", type=int, default=5)
     
     args = parser.parse_args()
 
