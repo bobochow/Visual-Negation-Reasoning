@@ -162,10 +162,11 @@ class CustomDataset(Dataset):
         image_file = line["image"]
         qs = line["text"]
         idx = line["question_id"]
+        gt = line["GT"]
         
         image = Image.open(os.path.join(self.image_folder, image_file)).convert('RGB')
         
-        return idx, qs, image
+        return idx, qs, image, gt
 
     def __len__(self):
         return len(self.questions)
@@ -174,7 +175,7 @@ class CustomDataset(Dataset):
 def collate_fn(batch):
     idx, qs, image = zip(*batch)
     
-    return list(idx), list(qs), list(image)
+    return list(idx), list(qs), list(image), list(gt)
 
 # DataLoader
 def create_data_loader(questions, image_folder, batch_size=1, num_workers=4):
@@ -226,7 +227,7 @@ def eval_model(args):
 
     data_loader = create_data_loader(questions, args.image_folder, batch_size=args.batch_size)
 
-    for (idx_list, qs_list, images_list) in tqdm(data_loader, desc="LLaVA MME Benchmark Evaluating"):
+    for (idx_list, qs_list, images_list, gt_list) in tqdm(data_loader, desc="LLaVA MME Benchmark Evaluating"):
         cot_outputs=[]
         cot_prompts=[]
         
@@ -255,7 +256,7 @@ def eval_model(args):
         responses, response_probs = generate_branching_responses(model, processor, inputs, num_branches=args.num_branches, max_length=args.max_new_tokens, batch=len(qs_list))
         
         
-        for i,(idx, cur_prompt, output, prompt) in enumerate(zip(idx_list, qs_list, responses, prompts)):
+        for i,(idx, cur_prompt, output, gt) in enumerate(zip(idx_list, qs_list, responses, gt_list)):
             # print('Prompt:', prompts[i])
             pos_score = 0.0
             neg_score = 0.0
@@ -274,6 +275,7 @@ def eval_model(args):
                                    "text": 'Yes',
                                    "answer_id": ans_id,
                                    "model_id": model_name,
+                                   "GT": gt,
                                    "metadata": {}}) + "\n")
             else:
                 ans_file.write(json.dumps({"question_id": idx,
@@ -281,6 +283,7 @@ def eval_model(args):
                                    "text": 'No',
                                    "answer_id": ans_id,
                                    "model_id": model_name,
+                                   "GT": gt,
                                    "metadata": {}}) + "\n")
     
     ans_file.close()
