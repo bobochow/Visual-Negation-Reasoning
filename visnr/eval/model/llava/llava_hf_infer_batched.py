@@ -229,7 +229,7 @@ def config():
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top_p", type=float, default=None)
     parser.add_argument("--num_beams", type=int, default=1)
-    parser.add_argument("--max_new_tokens", type=int, default=1024)
+    parser.add_argument("--max_new_tokens", type=int, default=128)
     parser.add_argument("--conv_mode", type=str, default="llava_v1")
     parser.add_argument("--max_instances", type=int, default=16)
     parser.add_argument("--cot_type", type=str, default=None)

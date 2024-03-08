@@ -19,9 +19,9 @@ def get_topk_tokens(model, inputs, num_branches=10):
     probabilities = torch.softmax(next_token_logits, dim=-1)
 
     # Get the top k tokens and their probabilities
-    topk_values, topk_indicies = torch.topk(probabilities, num_branches) # batch, k
+    topk_values, topk_indices = torch.topk(probabilities, num_branches) # batch, k
 
-    return topk_values, topk_indicies
+    return topk_values, topk_indices
 
 
 # Generate a full response from the model and log the difference in probabilities between the top two tokens
@@ -57,7 +57,7 @@ def generate_response(model, processor, inputs, max_length=1024, batch=1):
     return inputs['input_ids'], response_probs
 
 # Generate all branching responses
-def generate_branching_responses(model, processor, inputs, num_branches=10, max_length=500, batch=1):
+def generate_branching_responses(model, processor, inputs, prompt, raw_image, num_branches=10, max_length=500, batch=1):
 
     # First we tokenize the prompt
     # inputs = tokenizer(prompt, return_tensors="pt")
@@ -81,7 +81,17 @@ def generate_branching_responses(model, processor, inputs, num_branches=10, max_
         
         # Append the response to our list
         # responses.append(processor.batch_decode(response))
-        responses.append(processor.batch_decode(response[:, input_token_len:]))
+        output = processor.batch_decode(response[:, input_token_len:],skip_special_tokens=True)
+        
+        final_prompt = prompt + output[0] +f"\nUSER: Summarize the answer as yes, no, or uncertain. So the answer is: \nASSISTANT:"
+        final_inputs = processor(final_prompt, raw_image, return_tensors="pt").to('cuda', torch.float16)
+        final_inputs_token_len = final_inputs['input_ids'].shape[1]
+        with torch.no_grad():
+            final_outputs = model.generate(
+                        **final_inputs,
+                        max_new_tokens=128)
+        responses.append(processor.batch_decode(final_outputs[:, final_inputs_token_len:],skip_special_tokens=True))
+        # responses.append(processor.batch_decode(response[:, input_token_len:]))
         
         # Determine the average difference in probabilities for this response
         response_probs.append(sum(probs) / len(probs))
@@ -104,31 +114,28 @@ raw_image = Image.open('data/MME_Benchmark_release_version/code_reasoning/0020.p
 inputs = processor(prompt, raw_image, return_tensors="pt").to('cuda', torch.float16)
 
 # Generate branching responses
-responses, response_probs = generate_branching_responses(model, processor, inputs, num_branches=10, max_length=128, batch=1)
+responses, response_probs = generate_branching_responses(model, processor, inputs, prompt, raw_image, num_branches=10, max_length=128, batch=1)
 
-final_responses = f""
 # Print responses and scores
 # print('Prompt:', prompt)
-
+pos_scores=0
+neg_scores=0
 for k, response, prob in zip(range(len(responses)), responses, response_probs):
     
-    # print(f'\nResponse k={k}:\n\n', response[0])
-    # print('\nScore:', prob)
-    final_responses = final_responses +f"\nResponse k={k}: {response[0]}\nScore: {prob} " 
+    print(f'\nResponse k={k}:\n\n', response[0])
+    print('\nScore:', prob)
+    result = response[0].lower().strip()
+    if 'yes' in result:
+        pos_scores+=prob
+    elif 'no' in result:
+        neg_scores+=prob
+    # final_responses = final_responses +f"\nResponse k={k}: {response[0]}\nScore: {prob} " 
 
-final_prompt= f"USER: I will give you a image , corresponding question and all possible responses with scores, you should give the final answer.\n For example, Question: Is the cat white in the image?\n Response k=0: Yes.\n Score: 0.7\n Response k=1: No.\nScore: 0.6\n Response k=2: Yes. \nScore: 0.3\n Response k=3: No. \nScore: 0.5\n\n The total score of answer 'yes' is 0.7 + 0.3=1.\n The total scores of answer 'no' is 0.6 + 0.5=1.1 .\n\nSo the final answer is 'No'.\n \nQuestion: <image>\nIs a python code shown in the picture? Here are all possible responses to this question, along with their corresponding scores.\n {final_responses} \n\n The total score of answer 'yes' is <score>.\n\n The total scores of answer 'no' is <score>.\n\n So the final answer is ?\nASSISTANT:\n"
+if pos_scores > neg_scores:
+    print("------"*3)
+    print('\n\nFinal answer: Yes')
+else:
+    print('Final answer: No')
 
-final_inputs = processor(final_prompt, raw_image, return_tensors="pt").to('cuda', torch.float16)
-
-output_ids = model.generate(
-                    **final_inputs,
-                    do_sample=False,
-                    temperature=0,
-                    max_new_tokens=128)
-            
-input_token_len = final_inputs['input_ids'].shape[1]
-
-outputs = processor.batch_decode(output_ids[:, input_token_len:], skip_special_tokens=True)
-
-print('\nFinal Prompt:', final_prompt)
-print('\nFinal answer:', outputs[0])
+print(f"Positive scores: {pos_scores}")
+print(f"Negative scores: {neg_scores}")

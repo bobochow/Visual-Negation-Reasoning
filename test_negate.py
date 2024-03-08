@@ -23,17 +23,36 @@
 import json
 import os
 
-questions = [json.loads(q) for q in open(os.path.expanduser('llava_eval/MME/llava_mme.jsonl'), "r")]
+path = '/home/SNARE/data/POPE/coco/coco_pope_random_neg1.json'
+questions = [json.loads(q) for q in open(os.path.expanduser(path), "r")]
 
-ans_file = open('llava_eval/MME/llava_mme_gt.jsonl', "a")
+# ans_file = open('llava_eval/MME/llava_mme_gt.jsonl', "w")
 
 
 
 for i in range(len(questions)):
     
-    ans_file.write(json.dumps({"question_id": questions[i]["question_id"],
-                               "image": questions[i]["image"],
-                                   "text": questions[i]["text"],
-                                   "category": questions[i]["category"],
-                                   "GT": 'Yes' if i%2 == 0 else 'No',
-                                   }) + "\n")
+    questions[i]["label"] = 'yes' if questions[i]["label"] == 'no' else 'no'
+
+
+# 更新Python对象的值
+
+
+# 将更新后的Python对象转换为JSON字符串
+json_data = json.dumps(questions)
+
+# 将JSON字符串写回文件（如果需要）
+with open(path, 'w') as file:
+    file.write(json_data)
+    
+# import re
+
+# pattern = r'\bno\b'
+
+# test_string = "No, not now."
+
+# matches = re.search(pattern, test_string, re.IGNORECASE)
+
+# print(matches)
+
+

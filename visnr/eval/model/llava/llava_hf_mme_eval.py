@@ -107,9 +107,6 @@ def eval_model(args):
     elif args.cot_type == 'hint':
         cot=f"Note that if there is a negation in the question, you should answer the question with the opposite result of the affirmative form.\n"
     
-    
-    
-    
     ans_file = open(answers_file, "w")
 
     if 'plain' in model_name and 'finetune' not in model_name.lower() and 'mmtag' not in args.conv_mode:
