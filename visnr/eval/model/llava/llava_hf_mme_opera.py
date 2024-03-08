@@ -20,6 +20,7 @@ from transformers import AutoProcessor, LlavaForConditionalGeneration
 from visnr.conversation import conv_templates
 from visnr.constants import DEFAULT_IMAGE_TOKEN
 from visnr import set_seed
+
 # Custom dataset class
 class CustomDataset(Dataset):
     def __init__(self, questions, image_folder):
@@ -33,7 +34,7 @@ class CustomDataset(Dataset):
         idx = line["question_id"]
         gt = line["GT"]
         
-        prompt = DEFAULT_IMAGE_TOKEN + '\n' + qs 
+        prompt = DEFAULT_IMAGE_TOKEN  + '\n' + qs 
         conv=conv_templates['vicuna_v1'].copy()
         conv.append_message(conv.roles[0], prompt)
         conv.append_message(conv.roles[1], None)
@@ -75,6 +76,12 @@ def eval_model(args):
 
     data_loader = create_data_loader(questions, args.image_folder, batch_size=args.batch_size)
 
+    # key_position = {
+    #                 "image_start": tokens_before.shape[1]+1, 
+    #                 "image_end": tokens_before.shape[1]+NUM_IMAGE_TOKENS, 
+    #                 "response_start": input_ids.shape[1]+NUM_IMAGE_TOKENS-1,
+    #             }
+    
     for (idx_list, prompt_list, images_list, gt_list, qs_list) in tqdm(data_loader, desc="LLaVA MME Benchmark Evaluating"):
         
         
@@ -83,11 +90,15 @@ def eval_model(args):
         with torch.inference_mode():
             output_ids = model.generate(
                 **inputs,
-                do_sample=True if args.temperature > 0 else False,
-                temperature=args.temperature,
-                top_p=args.top_p,
+                do_sample=False,
                 num_beams=args.num_beams,
                 max_new_tokens=args.max_new_tokens,
+                output_attentions=True,
+                opera_decoding=True,
+                scale_factor=args.scale_factor,
+                threshold=args.threshold,
+                num_attn_candidates=args.num_attn_candidates,
+                penalty_weights=args.penalty_weights,
                 use_cache=True)
         
         input_token_len = inputs['input_ids'].shape[1]
@@ -112,19 +123,25 @@ def eval_model(args):
     ans_file.close()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="MME evaluation on LLaVA.")
     parser.add_argument("--model-path", type=str, default="llava-hf/llava-1.5-7b-hf")
     parser.add_argument("--image-folder", type=str, default="data/MME_Benchmark_release_version")
     parser.add_argument("--device", default="cuda", type=str)
     parser.add_argument("--device_map",  type=str, default="auto")
-    parser.add_argument("--question-file", type=str, default="llava_eval/MME/llava_mme.jsonl")
+    parser.add_argument("--question-file", type=str, default="visnr/eval/results/mme/llava_mme_gt.jsonl")
     parser.add_argument("--answers-file", type=str, default="llava_eval/MME/answers/test.jsonl")
-    parser.add_argument("--temperature", type=float, default=0)
-    parser.add_argument("--top_p", type=float, default=None)
-    parser.add_argument("--num_beams", type=int, default=1)
+    
     parser.add_argument("--max_new_tokens", type=int, default=128)
     parser.add_argument("--batch_size", default=8, type=int)
     parser.add_argument("--seed", type=int, default=42)
+    
+    parser.add_argument("--num_beams", type=int, default=5)
+    parser.add_argument("--sample", action='store_true')
+    parser.add_argument("--scale_factor", type=float, default=50)
+    parser.add_argument("--threshold", type=int, default=15)
+    parser.add_argument("--num_attn_candidates", type=int, default=5)
+    parser.add_argument("--penalty_weights", type=float, default=1.0)
+    
     args = parser.parse_args()
     set_seed(args.seed)
     eval_model(args)

@@ -165,3 +165,4 @@ data
 .vscode/
 llava_eval/
 transformers
+visnr/eval/results
