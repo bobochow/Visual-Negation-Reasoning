@@ -1,24 +1,24 @@
-export CUDA_VISIBLE_DEVICES=2
+export CUDA_VISIBLE_DEVICES=1
 export PYTHONPATH=/home/Visual-Negation-Reasoning
-seed=${1:-42}
+seed=${1:-55}
 
-# model_name=llava-1.5-7b-hf
-model_name=llava-1.5-13b-hf
+model_name=llava-1.5-7b-hf
+# model_name=llava-1.5-13b-hf
 
 model_path=llava-hf/${model_name}
 
 image_folder=data/MME_Benchmark_release_version
 
-temperature=0
+temperature=1
 
 neg=false
 
 if [[ $neg == false ]]; then
     question_file=visnr/eval/results/mme/llava_mme_gt.jsonl
-    experiment=${model_name}-greedy-t${temperature}-seed${seed}
+    experiment=${model_name}-sample-t${temperature}-seed${seed}
 else
     question_file=visnr/eval/results/mme/llava_mme_neg.jsonl
-    experiment=NEG-${model_name}-greedy-t${temperature}-seed${seed}
+    experiment=NEG-${model_name}-sample-t${temperature}-seed${seed}
 fi
 
 answers_file=visnr/eval/results/mme/answers/${experiment}.jsonl

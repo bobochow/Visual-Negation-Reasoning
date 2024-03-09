@@ -15,12 +15,13 @@ from torch.utils.data import Dataset, DataLoader
 from PIL import Image
 import math
 
-from transformers import AutoProcessor, LlavaForConditionalGeneration
+from transformers import AutoProcessor, LlavaForConditionalGeneration, set_seed
 
 from visnr.conversation import conv_templates
 from visnr.constants import DEFAULT_IMAGE_TOKEN
-from visnr import set_seed
+from visnr.decoding_utils.vcd_decoding import add_diffusion_noise
 
+# from visnr import set_seed
 # Custom dataset class
 class CustomDataset(Dataset):
     def __init__(self, questions, image_folder):
@@ -34,7 +35,7 @@ class CustomDataset(Dataset):
         idx = line["question_id"]
         gt = line["GT"]
         
-        prompt = DEFAULT_IMAGE_TOKEN  + '\n' + qs 
+        prompt = DEFAULT_IMAGE_TOKEN + '\n' + qs 
         conv=conv_templates['vicuna_v1'].copy()
         conv.append_message(conv.roles[0], prompt)
         conv.append_message(conv.roles[1], None)
@@ -63,11 +64,9 @@ def create_data_loader(questions, image_folder, batch_size=1, num_workers=4):
 
 def eval_model(args):
     # Model
-    # model = LlavaForConditionalGeneration.from_pretrained(args.model_path,torch_dtype=torch.float16,device_map=args.device_map)
+    model = LlavaForConditionalGeneration.from_pretrained(args.model_path,torch_dtype=torch.float16,device_map=args.device_map)
 
     processor = AutoProcessor.from_pretrained(args.model_path, pad_token="<pad>")
-    
-    print(len(processor.tokenizer))
     
     questions = [json.loads(q) for q in open(os.path.expanduser(args.question_file), "r")]
     
@@ -78,45 +77,30 @@ def eval_model(args):
 
     data_loader = create_data_loader(questions, args.image_folder, batch_size=args.batch_size)
 
-    NUM_IMAGE_TOKENS = 576
-    
     for (idx_list, prompt_list, images_list, gt_list, qs_list) in tqdm(data_loader, desc="LLaVA MME Benchmark Evaluating"):
         
         
         inputs = processor(prompt_list, images=images_list, return_tensors="pt", padding=True).to(dtype=torch.float16, device=args.device, non_blocking=True)
-        
-        chunks_before, chunks_after = [], []
-        for p in prompt_list:
-            chunk_before, chunk_after = p.split('<image>')
-            chunks_before.append(chunk_before)
-        
-        tokens_before = processor.tokenizer(
-            chunks_before,
-            return_tensors="pt",
-            padding="longest",
-            add_special_tokens=False
-        ).input_ids
+
+        images_cd = inputs['pixel_values'].contiguous()
+
+        for i in range(len(images_cd)):
+            images_cd[i] = add_diffusion_noise(images_cd[i], args.noise_step)
         
         
-        
-        key_position = {
-                    "image_start": tokens_before.shape[1]+1, 
-                    "image_end": tokens_before.shape[1]+NUM_IMAGE_TOKENS, 
-                    "response_start": inputs["input_ids"].shape[1]+NUM_IMAGE_TOKENS-1,
-                }
         
         with torch.inference_mode():
             output_ids = model.generate(
                 **inputs,
-                do_sample=False,
+                do_sample=True if args.temperature > 0 else False,
+                temperature=args.temperature,
+                top_p=args.top_p,
                 num_beams=args.num_beams,
                 max_new_tokens=args.max_new_tokens,
-                output_attentions=True,
-                opera_decoding=True,
-                scale_factor=args.scale_factor,
-                threshold=args.threshold,
-                num_attn_candidates=args.num_attn_candidates,
-                penalty_weights=args.penalty_weights,
+                images_cd=images_cd,
+                cd_alpha = args.cd_alpha,
+                cd_beta = args.cd_beta,
+                
                 use_cache=True)
         
         input_token_len = inputs['input_ids'].shape[1]
@@ -141,25 +125,23 @@ def eval_model(args):
     ans_file.close()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="MME evaluation on LLaVA.")
+    parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=str, default="llava-hf/llava-1.5-7b-hf")
     parser.add_argument("--image-folder", type=str, default="data/MME_Benchmark_release_version")
     parser.add_argument("--device", default="cuda", type=str)
     parser.add_argument("--device_map",  type=str, default="auto")
     parser.add_argument("--question-file", type=str, default="visnr/eval/results/mme/llava_mme_gt.jsonl")
     parser.add_argument("--answers-file", type=str, default="visnr/eval/results/mme/answers/test.jsonl")
-    
+    parser.add_argument("--temperature", type=float, default=1)
+    parser.add_argument("--top_p", type=float, default=None)
+    parser.add_argument("--num_beams", type=int, default=1)
     parser.add_argument("--max_new_tokens", type=int, default=128)
-    parser.add_argument("--batch_size", default=1, type=int)
+    parser.add_argument("--batch_size", default=8, type=int)
+    
+    parser.add_argument("--noise_step", type=int, default=500)
+    parser.add_argument("--cd_alpha", type=float, default=1)
+    parser.add_argument("--cd_beta", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
-    
-    parser.add_argument("--num_beams", type=int, default=5)
-    parser.add_argument("--sample", action='store_true')
-    parser.add_argument("--scale_factor", type=float, default=50)
-    parser.add_argument("--threshold", type=int, default=15)
-    parser.add_argument("--num_attn_candidates", type=int, default=5)
-    parser.add_argument("--penalty_weights", type=float, default=1.0)
-    
     args = parser.parse_args()
     set_seed(args.seed)
     eval_model(args)
